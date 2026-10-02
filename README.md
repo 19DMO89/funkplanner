@@ -15,6 +15,9 @@ Entwickelt von [Smart Dome Solutions e.U.](https://www.youtube.com/@SmartDome)
 - **Geräte aus Home Assistant übernehmen**: der Planer liest das Geräteregister und
   schlägt deine echten Geräte zum Platzieren vor, samt Bereich, Etage und Rolle
 - **Gerätedatenbank** mit über 650 Modellen, falls ein Gerät noch nicht existiert
+- **Wände automatisch erkennen**: der Planer sucht im Grundrissbild nach Wänden
+  samt Wandstärke, setzt Lücken als Türen und Fenster ein und zeigt alles zuerst
+  als Vorschau, bevor es übernommen wird (Werkzeug *Wände erkennen*, Taste `D`)
 - **Rechnet mit Wand- und Deckenmaterialien**, Montagehöhen, Störquellen und
   Kanalüberschneidungen
 

@@ -211,6 +211,7 @@ details[open] summary{margin-bottom:8px}
   </div>
   <div class="grp">
     <button class="tb" data-tool="cal" title="Maßstab über eine bekannte Strecke festlegen (M)"><svg class="ico" viewBox="0 0 16 16"><path d="M1 11h14M1 8v6M15 8v6M5 11v-2M9 11v-2" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>Maßstab<kbd>M</kbd></button>
+    <button class="tb" data-tool="detect" title="Wände automatisch aus dem Grundriss erkennen (D)"><svg class="ico" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="3" fill="currentColor"/><rect x="1" y="11" width="5" height="3" fill="currentColor"/><rect x="10" y="11" width="5" height="3" fill="currentColor"/><rect x="1" y="5" width="3" height="6" fill="currentColor"/></svg>Wände erkennen<kbd>D</kbd></button>
     <button class="tb" data-tool="plan" title="Geschoss verschieben – Plan, Wände und Geräte gemeinsam (P)"><svg class="ico" viewBox="0 0 16 16"><path d="M8 1v14M1 8h14" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M8 1l-2.5 2.5h5zM8 15l-2.5-2.5h5zM1 8l2.5-2.5v5zM15 8l-2.5-2.5v5z" fill="currentColor"/></svg>Verschieben<kbd>P</kbd></button>
     <button class="tb" data-tool="ref" title="Bezugspunkte A, B, C setzen, um Geschosse übereinanderzulegen (A)"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="#D63C7A" stroke-width="1.8"/><path d="M8 0v5M8 11v5M0 8h5M11 8h5" stroke="#D63C7A" stroke-width="1.6"/></svg>Bezugspunkte<kbd>A</kbd></button>
   </div>
@@ -1403,6 +1404,130 @@ function camPoly(c){
   return pts;
 }
 function analyze(){const M=buildModel(); A={M,zb:analyzeMesh(M,'zb'),th:analyzeMesh(M,'th'),sg:analyzeMesh(M,'sg'),wf:analyzeWifi(M),bt:analyzeBT(M),lan:analyzeLAN()};}
+/* ---------- Wanderkennung aus dem Grundrissbild ---------- */
+let DET=null; // {segs:[{x1,y1,x2,y2,cm,door}], info:{}}
+const DET_OPT={thr:150,tmin:8,tmax:60,lmin:0.7,gap:1.3,type:'hlz',doors:true};
+function detectWalls(){
+  const f=floor(), im=getImg(cur);
+  if(!im) return {error:'Für dieses Geschoss ist kein Grundriss geladen.'};
+  if(!(f.imgW>0)) return {error:'Bitte zuerst den Maßstab festlegen.'};
+  const maxPx=1600, k=Math.min(1,maxPx/Math.max(im.naturalWidth,im.naturalHeight));
+  const W=Math.max(2,Math.round(im.naturalWidth*k)), H=Math.max(2,Math.round(im.naturalHeight*k));
+  const cv2=document.createElement('canvas'); cv2.width=W; cv2.height=H;
+  const cx=cv2.getContext('2d',{willReadFrequently:true});
+  cx.fillStyle='#fff'; cx.fillRect(0,0,W,H); cx.drawImage(im,0,0,W,H);
+  let px; try{ px=cx.getImageData(0,0,W,H).data; }catch(e){ return {error:'Das Bild lässt sich nicht auswerten.'}; }
+  const dark=new Uint8Array(W*H), thr=DET_OPT.thr;
+  for(let i=0,q=0;i<W*H;i++,q+=4){ const g=px[q]*0.299+px[q+1]*0.587+px[q+2]*0.114; dark[i]=(g<thr)?1:0; }
+  const mpp=f.imgW/W;                       // Meter je Bildpunkt
+  const tmin=Math.max(1,DET_OPT.tmin/100/mpp), tmax=Math.max(tmin+1,DET_OPT.tmax/100/mpp);
+  const lmin=Math.max(3,DET_OPT.lmin/mpp), lineMax=Math.max(2,0.05/mpp);
+  const at=(x,y)=>dark[y*W+x];
+
+  // Querschnitte je Spalte (waagrechte Wände) bzw. je Zeile (senkrechte Wände)
+  function cross(axis){
+    const n=axis==='h'?W:H, m=axis==='h'?H:W, out=[];
+    for(let a=0;a<n;a++){
+      const runs=[];
+      let start=-1;
+      for(let b=0;b<m;b++){
+        const v=axis==='h'?at(a,b):at(b,a);
+        if(v&&start<0) start=b;
+        else if(!v&&start>=0){ runs.push([start,b-1]); start=-1; }
+      }
+      if(start>=0) runs.push([start,m-1]);
+      const cands=[];
+      for(const r of runs){ const t=r[1]-r[0]+1; if(t>=tmin&&t<=tmax) cands.push({c:(r[0]+r[1])/2,t}); }
+      for(let i=0;i+1<runs.length;i++){            // zwei dünne Linien mit Hohlraum
+        const r1=runs[i],r2=runs[i+1], t1=r1[1]-r1[0]+1, t2=r2[1]-r2[0]+1, span=r2[1]-r1[0]+1;
+        if(t1<=lineMax&&t2<=lineMax&&span>=tmin&&span<=tmax) cands.push({c:(r1[0]+r2[1])/2,t:span});
+      }
+      out.push(cands);
+    }
+    return out;
+  }
+  function group(cols,axis){
+    const segs=[], open=[];
+    for(let a=0;a<cols.length;a++){
+      const used=new Set();
+      for(const o of open) o.hit=false;
+      for(const c of cols[a]){
+        let best=null,bd=1e9;
+        for(const o of open){ if(o.hit) continue; const d=Math.abs(o.c-c.c)+Math.abs(o.t-c.t)*0.6; if(d<bd&&Math.abs(o.c-c.c)<=Math.max(2,c.t*0.4)&&Math.abs(o.t-c.t)<=Math.max(2,c.t*0.45)){bd=d;best=o;} }
+        if(best){ best.hit=true; best.a1=a; best.n++; best.c=(best.c*(best.n-1)+c.c)/best.n; best.t=(best.t*(best.n-1)+c.t)/best.n; }
+        else open.push({a0:a,a1:a,c:c.c,t:c.t,n:1,hit:true});
+      }
+      for(let i=open.length-1;i>=0;i--){ if(!open[i].hit){ const o=open.splice(i,1)[0]; if(o.a1-o.a0+1>=lmin) segs.push(o); } }
+    }
+    for(const o of open) if(o.a1-o.a0+1>=lmin) segs.push(o);
+    return segs.map(o=>({axis,a0:o.a0,a1:o.a1,c:o.c,t:o.t}));
+  }
+  let segs=[...group(cross('h'),'h'),...group(cross('v'),'v')];
+
+  // Öffnungen (Türen und Fenster) als Lücken in einer Flucht
+  const doors=[];
+  if(DET_OPT.doors){
+    const gmax=DET_OPT.gap/mpp;
+    for(const ax of ['h','v']){
+      const line=segs.filter(s=>s.axis===ax).sort((p,q)=>p.c-q.c||p.a0-q.a0);
+      for(let i=0;i<line.length;i++) for(let j=i+1;j<line.length;j++){
+        const A=line[i],B=line[j];
+        if(Math.abs(A.c-B.c)>Math.max(2,A.t*0.5)) continue;
+        if(Math.abs(A.t-B.t)>Math.max(2,A.t*0.5)) continue;
+        const g=B.a0-A.a1;
+        if(g<=1||g>gmax) continue;
+        // Kreuzung mit einer Querwand ist keine Öffnung
+        const cc=(A.c+B.c)/2, mid=(A.a1+B.a0)/2;
+        const crossed=segs.some(q=>q.axis!==ax && q.c>=A.a1-2 && q.c<=B.a0+2 && q.a0-2<=cc && q.a1+2>=cc);
+        if(crossed) continue;
+        doors.push({axis:ax,a0:A.a1,a1:B.a0,c:cc,t:(A.t+B.t)/2,door:true});
+      }
+    }
+  }
+  segs=segs.concat(doors);
+
+  // in Weltkoordinaten umrechnen
+  const co=Math.cos(f.imgRot||0), si=Math.sin(f.imgRot||0);
+  const toW=(ux,uy)=>{const u=ux*mpp,v=uy*mpp;return [f.imgX+u*co-v*si, f.imgY+u*si+v*co];};
+  let out=segs.map(sg=>{
+    const p1=sg.axis==='h'?toW(sg.a0,sg.c):toW(sg.c,sg.a0);
+    const p2=sg.axis==='h'?toW(sg.a1,sg.c):toW(sg.c,sg.a1);
+    return {x1:p1[0],y1:p1[1],x2:p2[0],y2:p2[1],cm:Math.round(sg.t*mpp*100),door:!!sg.door,len:Math.hypot(p2[0]-p1[0],p2[1]-p1[1])};
+  });
+  // Doppelfunde entfernen
+  out.sort((a,b)=>b.len-a.len);
+  const keep=[];
+  for(const s1 of out){
+    const dup=keep.some(s2=>{
+      if(s1.door!==s2.door) return false;
+      const h1=Math.abs(s1.y2-s1.y1)<Math.abs(s1.x2-s1.x1), h2=Math.abs(s2.y2-s2.y1)<Math.abs(s2.x2-s2.x1);
+      if(h1!==h2) return false;
+      const c1=h1?(s1.y1+s1.y2)/2:(s1.x1+s1.x2)/2, c2=h2?(s2.y1+s2.y2)/2:(s2.x1+s2.x2)/2;
+      if(Math.abs(c1-c2)>0.25) return false;
+      const a1=h1?[Math.min(s1.x1,s1.x2),Math.max(s1.x1,s1.x2)]:[Math.min(s1.y1,s1.y2),Math.max(s1.y1,s1.y2)];
+      const a2=h2?[Math.min(s2.x1,s2.x2),Math.max(s2.x1,s2.x2)]:[Math.min(s2.y1,s2.y2),Math.max(s2.y1,s2.y2)];
+      return Math.min(a1[1],a2[1])-Math.max(a1[0],a2[0])>0.3*Math.min(s1.len,s2.len);
+    });
+    if(!dup) keep.push(s1);
+  }
+  return {segs:keep};
+}
+function detectMaterial(cm,door){
+  if(door){ let m=S.materials.find(x=>x.id==='ht'); if(!m){ m={id:'ht',name:'Holztür',d24:4,d5:5,d6:6,d868:2,color:'#a57a4d'}; S.materials.push(m);} return m.id; }
+  const t=DET_OPT.type, id='auto-'+t+'-'+cm;
+  let m=S.materials.find(x=>x.id===id);
+  if(!m){ const v=wallFromSpec({type:t,cm,extra:'putz'});
+    m={id,name:`${WALL_TYPES[t].name} ${cm} cm (erkannt)`,...v,color:WALL_TYPES[t].color,spec:{type:t,cm,extra:'putz'}};
+    S.materials.push(m); }
+  return m.id;
+}
+function applyDetection(){
+  if(!DET||!DET.segs.length) return;
+  snap();
+  for(const s of DET.segs) S.walls.push({id:uid(),floor:cur,x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2,mat:detectMaterial(s.cm,s.door)});
+  const n=DET.segs.length; DET=null; renderMatSelect(); changed(); renderPanel();
+  toast(`${n} ${n===1?'Wand':'Wände'} übernommen. Materialien kannst du jederzeit anpassen.`);
+}
 function worldBounds(fid){
   let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity; const add=(x,y)=>{x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x);y1=Math.max(y1,y);};
   S.walls.forEach(w=>{if(w.floor===fid){add(w.x1,w.y1);add(w.x2,w.y2);}}); S.devices.forEach(d=>{if(d.floor===fid)add(d.x,d.y);});
@@ -1601,6 +1726,9 @@ function draw(){
   if(f.refs) for(const [k,r] of Object.entries(f.refs)){const X=sx(r.x),Y=sy(r.y);
     ctx.strokeStyle='#D63C7A';ctx.lineWidth=2;ctx.beginPath();ctx.arc(X,Y,8,0,7);ctx.moveTo(X-13,Y);ctx.lineTo(X-4,Y);ctx.moveTo(X+4,Y);ctx.lineTo(X+13,Y);ctx.moveTo(X,Y-13);ctx.lineTo(X,Y-4);ctx.moveTo(X,Y+4);ctx.lineTo(X,Y+13);ctx.stroke();
     ctx.fillStyle='#D63C7A';ctx.font='700 13px '+FONT;ctx.fillText(k,X+11,Y-9);}
+  if(DET&&tool==='detect'){ for(const s of DET.segs){
+      ctx.strokeStyle=s.door?'#D99A00':'#D63C7A'; ctx.lineWidth=Math.max(3,Math.min(12,2+s.cm/5)); ctx.globalAlpha=.75; ctx.lineCap='butt';
+      ctx.beginPath();ctx.moveTo(sx(s.x1),sy(s.y1));ctx.lineTo(sx(s.x2),sy(s.y2));ctx.stroke(); ctx.globalAlpha=1; } }
   if(tool==='wall'&&hover&&!drag){ctx.strokeStyle=C.accent;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(sx(hover.x),sy(hover.y),5,0,7);ctx.stroke();}
   let m=1; for(const c of [0.5,1,2,5,10,20]){m=c; if(c*view.scale>=70) break;}
   const bx=W-20-m*view.scale,by=H-22; ctx.strokeStyle=C.ink;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(bx,by-5);ctx.lineTo(bx,by);ctx.lineTo(bx+m*view.scale,by);ctx.lineTo(bx+m*view.scale,by-5);ctx.stroke();
@@ -1794,10 +1922,13 @@ function renderLinkBar(){
   bar.innerHTML=`<span>Kabel von <b>${esc(a.name)}</b> (${esc(floorName(a.floor))}) – Zielgerät anklicken, auch auf einem anderen Geschoss.</span><button data-act="linkCancel">Abbrechen</button>`;
 }
 function setTool(t){
-  if(t!=='link') linkStart=null; tool=t;drag=null;hover=null;
+  const wasDetect=(tool==='detect');
+  if(t!=='link') linkStart=null; if(t!=='detect') DET=null; tool=t;drag=null;hover=null;
   document.querySelectorAll('[data-tool]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.tool===t)));
-  const msg=t==='wall'?'Ziehen zum Zeichnen. Umschalt = freier Winkel.':t==='cal'?'Linie über eine bekannte Strecke ziehen.':t==='plan'?'Ziehen verschiebt das ganze Geschoss: Plan, Wände, Geräte.':t==='ref'?(()=>{const f=floor(),k=['A','B','C'].find(k=>!(f.refs&&f.refs[k]));return k?`Bezugspunkt ${k} setzen – auf allen Geschossen an derselben Stelle (z. B. Hausecke).`:'Punkte ziehen zum Korrigieren.';})():t==='tpl'&&tpl?'Klicken zum Platzieren: '+tpl.n:t==='link'?(linkStart?'Jetzt das zweite Gerät anklicken (auch auf einem anderen Geschoss).':'Erstes Gerät anklicken – z. B. den Switch.'):t.startsWith('dev:')?'Klicken zum Platzieren.':'';
-  $('#hud').hidden=!msg; $('#hud').textContent=msg; cv.style.cursor=t==='select'?'default':'crosshair'; renderLinkBar(); render();
+  const msg=t==='wall'?'Ziehen zum Zeichnen. Umschalt = freier Winkel.':t==='cal'?'Linie über eine bekannte Strecke ziehen.':t==='detect'?'Einstellungen rechts prüfen und auf „Wände suchen“ klicken.':t==='plan'?'Ziehen verschiebt das ganze Geschoss: Plan, Wände, Geräte.':t==='ref'?(()=>{const f=floor(),k=['A','B','C'].find(k=>!(f.refs&&f.refs[k]));return k?`Bezugspunkt ${k} setzen – auf allen Geschossen an derselben Stelle (z. B. Hausecke).`:'Punkte ziehen zum Korrigieren.';})():t==='tpl'&&tpl?'Klicken zum Platzieren: '+tpl.n:t==='link'?(linkStart?'Jetzt das zweite Gerät anklicken (auch auf einem anderen Geschoss).':'Erstes Gerät anklicken – z. B. den Switch.'):t.startsWith('dev:')?'Klicken zum Platzieren.':'';
+  $('#hud').hidden=!msg; $('#hud').textContent=msg; cv.style.cursor=t==='select'?'default':'crosshair'; renderLinkBar();
+  if(S&&(t==='detect'||wasDetect)) renderPanel();
+  render();
 }
 document.querySelectorAll('.toolbar > .grp > [data-tool]').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.tool)));
 function setNet(n){
@@ -1827,7 +1958,7 @@ document.addEventListener('keydown',e=>{
   if(k==='k'){if(net!=='lan') setNet('lan'); setTool('link'); return;}
   if(/^[1-6]$/.test(k)){const t=TOOLS[net][+k-1]; if(t) setTool('dev:'+t[0]); return;}
   if(k==='s'&&net!=='lan'){setTool('dev:noise');return;}
-  const map={v:'select',w:'wall',m:'cal',p:'plan',a:'ref'}; if(map[k]) setTool(map[k]);
+  const map={v:'select',w:'wall',m:'cal',p:'plan',a:'ref',d:'detect'}; if(map[k]) setTool(map[k]);
 });
 document.addEventListener('keyup',e=>{if(e.key===' ')spaceDown=false;});
 $('#undoBtn').onclick=undo; $('#redoBtn').onclick=redo;
@@ -2076,6 +2207,22 @@ function renderPanel(){
     <label class="chk" style="padding:0 0 8px"><input type="checkbox" id="alKeep" ${S.alignKeepScale?'checked':''} data-f="alignKeep">Maßstab beibehalten (nur drehen und verschieben)</label>
     <div class="row">${rfid===cur?'<span class="fine">Das ist das Bezugsgeschoss – die anderen werden daran ausgerichtet.</span>':`<button class="btn primary" data-act="alignOne" ${common<2?'disabled':''}>An ${esc(rf.name)} ausrichten</button>`}<button class="btn" data-act="alignAll">Alle ausrichten</button>${Object.keys(refs).length?'<button class="btn" data-act="refReset">Punkte zurücksetzen</button>':''}</div>
    </section>`;}
+  // Wanderkennung
+  if(tool==='detect'){
+    h+=`<section><h3>Wände automatisch erkennen</h3>
+      <p class="fine">Sucht im Grundrissbild dieses Geschosses nach Wänden. Vorher Grundriss laden und den Maßstab festlegen.</p>
+      <div class="field"><label for="dThr">Schwelle dunkel (0–255)</label><input id="dThr" type="number" min="20" max="240" step="5" data-d="thr" value="${DET_OPT.thr}"></div>
+      <div class="field"><label for="dTmin">Wandstärke von (cm)</label><input id="dTmin" type="number" min="1" step="1" data-d="tmin" value="${DET_OPT.tmin}"></div>
+      <div class="field"><label for="dTmax">Wandstärke bis (cm)</label><input id="dTmax" type="number" min="2" step="1" data-d="tmax" value="${DET_OPT.tmax}"></div>
+      <div class="field"><label for="dLmin">Mindestlänge (m)</label><input id="dLmin" type="number" min="0.2" step="0.1" data-d="lmin" value="${DET_OPT.lmin}"></div>
+      <div class="field"><label for="dType">Baustoff für erkannte Wände</label><select id="dType" data-d="type">${Object.entries(WALL_TYPES).map(([k,v])=>`<option value="${k}" ${k===DET_OPT.type?'selected':''}>${v.name}</option>`).join('')}</select></div>
+      <label class="chk" style="padding:0 0 6px"><input type="checkbox" data-d="doors" ${DET_OPT.doors?'checked':''}>Lücken als Türen und Fenster einsetzen</label>
+      ${DET_OPT.doors?`<div class="field"><label for="dGap">Lücke bis (m)</label><input id="dGap" type="number" min="0.3" step="0.1" data-d="gap" value="${DET_OPT.gap}"></div>`:''}
+      <div class="row"><button class="btn primary" data-act="detRun">Wände suchen</button>${DET?'<button class="btn" data-act="detApply">Übernehmen</button><button class="btn danger" data-act="detClear">Verwerfen</button>':''}</div>
+      ${DET?`<div class="status ${DET.segs.length?'good':'bad'}">${DET.segs.length} Fund${DET.segs.length===1?'':'e'}${DET.segs.filter(s=>s.door).length?`, davon ${DET.segs.filter(s=>s.door).length} Öffnungen`:''}. Die Vorschau liegt in Magenta über dem Plan.</div>`:''}
+      <p class="fine">Wenn zu wenig gefunden wird: Schwelle erhöhen oder Mindestlänge senken. Wenn Bemaßung und Text mit erkannt werden: Schwelle senken, Mindestlänge erhöhen oder die Wandstärke enger fassen. Nach dem Übernehmen lassen sich Material und Verlauf jeder Wand einzeln anpassen.</p>
+    </section>`;
+  }
   // Eigene Wand
   {const v=wallFromSpec(wb), auto=wallSpecName(wb);
   h+=`<section id="wbSec"><details ${wbOpen?'open':''} data-dt="wb"><summary>Eigene Wand anlegen</summary>
@@ -2159,6 +2306,9 @@ document.addEventListener('click',e=>{
   else if(act==='projDel') arm(b,'projDel','Projekt wirklich löschen?',()=>{ if(PROJ.list.length<2) return; const id=PROJ.current;
     if(HA) rpc('delete',{id}).catch(()=>{}); else try{localStorage.removeItem(PKEY(id));}catch(e){} PROJ.list=PROJ.list.filter(p=>p.id!==id); PROJ.current=PROJ.list[0].id; writeIdx(); openProjectFresh(); toast('Projekt gelöscht.');});
   else if(act==='haLoadDev'){ rpc('devices').then(r=>{HA_DATA=r;renderPanel();toast(`${r.devices.length} Geräte aus Home Assistant geladen.`);}).catch(e=>toast('Fehler: '+e.message)); }
+  else if(act==='detRun'){ const r=detectWalls(); if(r.error){toast(r.error);} else {DET=r; renderPanel(); render(); if(!r.segs.length) toast('Nichts gefunden. Probier eine höhere Schwelle oder eine kleinere Mindestlänge.');} }
+  else if(act==='detApply') applyDetection();
+  else if(act==='detClear'){ DET=null; renderPanel(); render(); }
   else if(act==='nPreset'){snap();S.settings.n=num(b.dataset.n,2.8);changed();renderPanel();}
   else if(act==='export') openExport();
   else if(act==='import') openImport();
@@ -2175,6 +2325,7 @@ side.addEventListener('toggle',e=>{const d=e.target; if(d.dataset&&d.dataset.dt=
 side.addEventListener('input',e=>{const t=e.target; if(t.dataset.w==='name'){wb.name=t.value;return;}if(t.dataset.f==='flOp'){floor().imgOp=num(t.value,.55);render();save();}});
 side.addEventListener('change',e=>{
   const t=e.target,f=floor();
+  if(t.dataset.d){ const k=t.dataset.d; DET_OPT[k]= k==='type'?t.value : k==='doors'?t.checked : num(t.value,DET_OPT[k]); DET=null; renderPanel(); render(); return; }
   if(t.dataset.w){const k=t.dataset.w; if(k==='cm') wb.cm=Math.max(1,num(t.value,wb.cm)); else if(k==='type'){wb.type=t.value; wb.cm=WALL_TYPES[t.value].def;} else if(k!=='name') wb[k]=t.value; renderPanel(); return;}
   if(t.dataset.m){const m=S.materials.find(x=>x.id===t.dataset.m);if(!m)return;snap();
     const k=t.dataset.mf; if(k==='name') m.name=t.value||m.name; else if(k==='color') m.color=t.value; else m[k]=num(t.value,m[k]);
