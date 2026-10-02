@@ -8,6 +8,7 @@ from pathlib import Path
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN, PANEL_ICON, PANEL_TITLE, PANEL_URL, STATIC_PATH
 from .store import ProjectStore
@@ -38,11 +39,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         from homeassistant.components import panel_custom
 
+        # Version an die URL hängen, damit Browser nach einem Update neu laden
+        integration = await async_get_integration(hass, DOMAIN)
+
         await panel_custom.async_register_panel(
             hass,
             frontend_url_path=PANEL_URL.lstrip("/"),
             webcomponent_name="funkplaner-panel",
-            module_url=f"{STATIC_PATH}/funkplaner-panel.js",
+            module_url=f"{STATIC_PATH}/funkplaner-panel.js?v={integration.version}",
             sidebar_title=PANEL_TITLE,
             sidebar_icon=PANEL_ICON,
             require_admin=False,

@@ -44,8 +44,8 @@ class FunkplanerPanel extends HTMLElement {
     if (this._frame || !this._hass) return;
     const style = document.createElement("style");
     style.textContent = `
-      :host { display:block; height:100%; }
-      iframe { border:0; width:100%; height:100%; display:block; background:var(--primary-background-color); }
+      :host { display:block; position:relative; height:100vh; height:100dvh; }
+      iframe { position:absolute; inset:0; border:0; width:100%; height:100%; display:block; background:var(--primary-background-color); }
     `;
     const frame = document.createElement("iframe");
     const dark = this._hass.themes && this._hass.themes.darkMode ? "dark" : "light";
