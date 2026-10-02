@@ -49,7 +49,8 @@ class FunkplanerPanel extends HTMLElement {
     `;
     const frame = document.createElement("iframe");
     const dark = this._hass.themes && this._hass.themes.darkMode ? "dark" : "light";
-    frame.src = `${this._staticPath()}/index.html?ha=1&theme=${dark}`;
+    const ver = (this._panel && this._panel.config && this._panel.config.version) || "";
+    frame.src = `${this._staticPath()}/index.html?ha=1&theme=${dark}&v=${encodeURIComponent(ver)}`;
     frame.setAttribute("allow", "clipboard-write");
     this.attachShadow({ mode: "open" });
     this.shadowRoot.append(style, frame);

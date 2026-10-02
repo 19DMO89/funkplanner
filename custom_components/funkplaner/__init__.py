@@ -50,7 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             sidebar_title=PANEL_TITLE,
             sidebar_icon=PANEL_ICON,
             require_admin=False,
-            config={"static_path": STATIC_PATH},
+            config={"static_path": STATIC_PATH, "version": integration.version},
         )
         _LOGGER.debug("Funkplaner-Panel unter %s registriert", PANEL_URL)
 
