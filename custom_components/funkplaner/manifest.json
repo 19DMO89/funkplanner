@@ -1,13 +1,13 @@
 {
   "domain": "funkplaner",
   "name": "Funkplaner",
-  "version": "1.0.0",
-  "documentation": "https://github.com/19DMO89/funkplanner",
-  "issue_tracker": "https://github.com/19DMO89/funkplanner/issues",
   "codeowners": ["@19DMO89"],
   "config_flow": true,
-  "dependencies": ["http", "websocket_api", "frontend", "panel_custom"],
-  "iot_class": "local_polling",
+  "dependencies": ["frontend", "http", "panel_custom", "websocket_api"],
+  "documentation": "https://github.com/19DMO89/funkplanner",
   "integration_type": "service",
-  "requirements": []
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/19DMO89/funkplanner/issues",
+  "requirements": [],
+  "version": "1.0.0"
 }
