@@ -18,6 +18,10 @@ Entwickelt von [Smart Dome Solutions e.U.](https://www.youtube.com/@SmartDome)
 - **Wände automatisch erkennen**: der Planer sucht im Grundrissbild nach Wänden
   samt Wandstärke, setzt Lücken als Türen und Fenster ein und zeigt alles zuerst
   als Vorschau, bevor es übernommen wird (Werkzeug *Wände erkennen*, Taste `D`)
+- **Wände nachträglich bearbeiten**: Endpunkte ziehen, ganze Wände verschieben,
+  Länge eintippen, Wände teilen und das Material ändern – auch für alle Wände
+  aus demselben Material auf einmal. Angrenzende Wände bleiben an den Ecken verbunden
+- **Deutsch und Englisch**: Umschalter oben rechts, inklusive Gerätedatenbank
 - **Rechnet mit Wand- und Deckenmaterialien**, Montagehöhen, Störquellen und
   Kanalüberschneidungen
 
